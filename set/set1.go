@@ -1,8 +1,10 @@
 package set1
 
 import (
+	"crypto/aes"
 	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 )
 
 func HexToBase64(s string) string {
@@ -65,4 +67,56 @@ func SingleXorDecrpytion(message string, mostcommon byte) byte {
 	*/
 
 	return mostcommon ^ best
+}
+
+func RepeatingXor(message, key []byte) []byte {
+
+	output_bytes := make([]byte, len(message))
+
+	for i, value := range message {
+		output_bytes[i] = value ^ key[i%len(key)]
+	}
+
+	return output_bytes
+
+}
+
+func DecryptAESECB(message, key []byte) (res []byte) {
+
+	cipher, err := aes.NewCipher(key)
+
+	if err != nil {
+		panic("Could not create cipher")
+	}
+
+	bs := cipher.BlockSize()
+
+	if len(message)%bs > 0 {
+		panic(fmt.Sprintf("Message size %d not a multiple of %d", len(message), bs))
+	}
+
+	res = make([]byte, len(message))
+
+	for processed := 0; processed < len(message); processed += bs {
+		cipher.Decrypt(res[processed:processed+bs], message[processed:processed+bs])
+	}
+
+	return
+
+}
+
+func DetectECB(ciphertext []byte, blocksize int) bool {
+	// string is just a workaround, because go does not support []byte as keys
+	hashset := make(map[string]bool)
+
+	for processed := 0; processed < len(ciphertext); processed += blocksize {
+		block := string(ciphertext[processed : processed+blocksize])
+		if _, contains := hashset[block]; !contains {
+			hashset[block] = true
+		} else {
+			return true
+		}
+	}
+
+	return false
 }
