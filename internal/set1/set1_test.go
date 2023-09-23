@@ -1,12 +1,11 @@
-package set1_test
+package set_test
 
 import (
 	"bufio"
 	"bytes"
-	set1 "cryptopals/set"
+	set "cryptopals/internal/set1"
 	"encoding/base64"
 	"encoding/hex"
-	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -16,10 +15,10 @@ func TestHexToBase64(t *testing.T) {
 
 	input := "49276d206b696c6c696e6720796f757220627261696e206c696b65206120706f69736f6e6f7573206d757368726f6f6d"
 	expected := "SSdtIGtpbGxpbmcgeW91ciBicmFpbiBsaWtlIGEgcG9pc29ub3VzIG11c2hyb29t"
-	observed := set1.HexToBase64(input)
+	observed := set.HexToBase64(input)
 
 	if observed != expected {
-		t.Fatal(fmt.Sprintf("Expected %s, but got %s", expected, observed))
+		t.Fatalf("Expected %s, but got %s", expected, observed)
 	}
 }
 
@@ -28,10 +27,10 @@ func TestFixedXor(t *testing.T) {
 	input := "1c0111001f010100061a024b53535009181c"
 	key := "686974207468652062756c6c277320657965"
 	expected := "746865206b696420646f6e277420706c6179"
-	observed := set1.FixedXor(input, key)
+	observed := set.FixedXor(input, key)
 
 	if observed != expected {
-		t.Fatal(fmt.Sprintf("Expected %s, but got %s", expected, observed))
+		t.Fatalf("Expected %s, but got %s", expected, observed)
 	}
 }
 
@@ -39,13 +38,13 @@ func TestSingleXorCipher(t *testing.T) {
 
 	input := "1b37373331363f78151b7f2b783431333d78397828372d363c78373e783a393b3736"
 	var most_common_plaintext byte = ' '
-	observed := set1.SingleXorDecrpytion(input, most_common_plaintext)
+	observed := set.SingleXorDecrpytion(input, most_common_plaintext)
 
 	t.Logf("Key is likely %x with most common char (%x)", observed, most_common_plaintext)
 
 	b_len := len(input) / 2 // |input|//2 => 2 hex chars make up one byte
 
-	encoded, _ := hex.DecodeString(set1.FixedXor(input, hex.EncodeToString(bytes.Repeat([]byte{observed}, b_len))))
+	encoded, _ := hex.DecodeString(set.FixedXor(input, hex.EncodeToString(bytes.Repeat([]byte{observed}, b_len))))
 
 	t.Log(string(encoded))
 }
@@ -68,8 +67,8 @@ func TestRepeatingXor(t *testing.T) {
 
 	for _, pair := range pairs {
 		expected, err := hex.DecodeString(pair.ciphertext)
-		if enc := set1.RepeatingXor([]byte(pair.plaintext), key); err != nil || !bytes.Equal(enc, expected) {
-			t.Errorf("Failed for message `%s`, instead got `%s`", pair.plaintext, string(set1.RepeatingXor(enc, key)))
+		if enc := set.RepeatingXor([]byte(pair.plaintext), key); err != nil || !bytes.Equal(enc, expected) {
+			t.Errorf("Failed for message `%s`, instead got `%s`", pair.plaintext, string(set.RepeatingXor(enc, key)))
 		}
 	}
 
@@ -79,10 +78,10 @@ func TestAesECB(t *testing.T) {
 
 	key := []byte("YELLOW SUBMARINE")
 
-	f, err := os.Open("set1-ch7.txt")
+	f, err := os.Open("testdata/set1-ch7.txt")
 
 	if err != nil {
-		panic("Could not open file")
+		panic("Could not open file testdata")
 	}
 
 	defer f.Close()
@@ -97,14 +96,14 @@ func TestAesECB(t *testing.T) {
 	}
 
 	text, _ := base64.RawStdEncoding.DecodeString(sb.String())
-	plaintext := set1.DecryptAESECB(text, key)
+	plaintext := set.DecryptAESECB(text, key)
 
 	t.Log(string(plaintext))
 
 }
 
 func TestAesECBDetector(t *testing.T) {
-	f, err := os.Open("set1-ch8.txt")
+	f, err := os.Open("testdata/set1-ch8.txt")
 
 	if err != nil {
 		panic("Could not open file")
@@ -120,7 +119,7 @@ func TestAesECBDetector(t *testing.T) {
 	for i := 0; reader.Scan(); i++ {
 		cipher_bytes, err := hex.DecodeString(reader.Text())
 
-		if err == nil && set1.DetectECB(cipher_bytes, blocksize) {
+		if err == nil && set.DetectECB(cipher_bytes, blocksize) {
 			t.Logf("Ciphertext %d is in ECB", i)
 		}
 	}

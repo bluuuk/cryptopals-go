@@ -41,8 +41,7 @@ func SingleXorDecrpytion(message string, mostcommon byte) byte {
 	frequency_map := make(map[byte]int)
 
 	for _, b := range message_bytes {
-		value, _ := frequency_map[b] // default is 0 so we do not have to if else
-		frequency_map[b] = value + 1
+		frequency_map[b] = frequency_map[b] + 1
 	}
 
 	// https://stackoverflow.com/questions/62055988/golang-a-map-interface-how-to-print-key-and-value

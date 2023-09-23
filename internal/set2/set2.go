@@ -3,20 +3,27 @@ package set
 import (
 	"bytes"
 	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
 	"errors"
 	"fmt"
-	"math/rand"
+	"math/big"
 )
 
-func PCKS7Padding(input []byte, blocklength int) []byte {
+func PCKS7Padding(input []byte) []byte {
 	return PCKS7PaddingVarBlockLen(input, 16)
 }
 
 func PCKS7PaddingVarBlockLen(input []byte, blocklength int) []byte {
+
+	if blocklength < 1 {
+		return []byte{}
+	}
+
 	if l := len(input); l%blocklength == 0 {
 		return append(input, bytes.Repeat([]byte{byte(blocklength)}, blocklength)...)
 	} else {
-		return append(input, bytes.Repeat([]byte{byte(blocklength - l)}, blocklength-l)...)
+		return append(input, bytes.Repeat([]byte{byte(blocklength - l%blocklength)}, blocklength-l%blocklength)...)
 	}
 }
 
@@ -31,11 +38,11 @@ func XOR(a, b []byte) (res []byte) {
 
 	res = make([]byte, length)
 
-	for i, _ := range res {
+	for i := range res {
 		res[i] = a[i] ^ b[i]
 	}
 
-	return
+	return res
 }
 
 func CBCEncrypt(input, key []byte) []byte {
@@ -47,7 +54,7 @@ func CBCEncrypt(input, key []byte) []byte {
 	}
 
 	blocksize := c.BlockSize()
-	padded := PCKS7Padding(input, blocksize)
+	padded := PCKS7PaddingVarBlockLen(input, blocksize)
 	// space for IV and padding
 	ciphertext := make([]byte, len(padded)+blocksize)
 	rand.Read(ciphertext[:blocksize])
@@ -61,7 +68,7 @@ func CBCEncrypt(input, key []byte) []byte {
 	return ciphertext
 }
 
-func CBCDecrypt(input, key []byte) (error, []byte) {
+func CBCDecrypt(input, key []byte) ([]byte, error) {
 
 	c, err := aes.NewCipher(key)
 
@@ -91,9 +98,72 @@ func CBCDecrypt(input, key []byte) (error, []byte) {
 	padding := bytes.Repeat([]byte{pad_val}, int(pad_val))
 
 	if pad_val <= byte(blocksize) && bytes.HasSuffix(plaintext, padding) {
-		return nil, plaintext[:len(plaintext)-int(pad_val)]
+		return plaintext[:len(plaintext)-int(pad_val)], nil
 	} else {
-		return errors.New("invalid padding"), plaintext
+		return plaintext, errors.New("invalid padding")
 	}
+
+}
+
+func generateSecureRandomNumber(nonInclusiveUpperBound int) int {
+
+	choice, err := rand.Int(rand.Reader, big.NewInt(int64(nonInclusiveUpperBound)))
+
+	if err != nil {
+		panic("Not enough randomness, retry")
+	}
+	return int(choice.Int64())
+}
+
+func ECBorCBC(plaintext []byte) (ciphertext []byte, isECB bool) {
+
+	isECB = generateSecureRandomNumber(2) == 0
+	key := make([]byte, 16)
+
+	if _, err := rand.Reader.Read(key); err != nil {
+		panic("Not enough randomness")
+	}
+
+	randomSuffix := make([]byte, generateSecureRandomNumber(5+1)+5)
+	randomPrefix := make([]byte, generateSecureRandomNumber(5+1)+5)
+
+	if _, err := rand.Reader.Read(randomSuffix); err != nil {
+		panic("Not enough randomness")
+	}
+
+	if _, err := rand.Reader.Read(randomPrefix); err != nil {
+		panic("Not enough randomness")
+	}
+
+	aes, err := aes.NewCipher(key)
+
+	if err != nil {
+		panic("AES not available with key size 16")
+	}
+
+	blocksize := aes.BlockSize()
+	paddedPlaintext := PCKS7Padding(append(append(randomPrefix, plaintext...), randomSuffix...))
+	ciphertextLength := len(paddedPlaintext)
+	ciphertext = make([]byte, len(paddedPlaintext))
+
+	if isECB {
+
+		for i := 0; i < ciphertextLength; i += blocksize {
+			aes.Encrypt(ciphertext[i:i+blocksize], paddedPlaintext[i:i+blocksize])
+		}
+
+	} else {
+
+		iv := make([]byte, blocksize)
+		if _, err := rand.Reader.Read(iv); err != nil {
+			panic("Not enough randomness")
+		}
+
+		cbc := cipher.NewCBCEncrypter(aes, iv)
+		cbc.CryptBlocks(ciphertext, paddedPlaintext)
+		ciphertext = append(iv, ciphertext...)
+	}
+
+	return ciphertext, isECB
 
 }
