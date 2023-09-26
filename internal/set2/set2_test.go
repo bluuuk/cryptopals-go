@@ -154,10 +154,10 @@ func TestECBorCBCOracle(t *testing.T) {
 				We assume that the first, second and last block are to no interest due the random suffix, prefix and iv. We choose a
 				reapeating plaintext(PL1=PL2=PL3=PL4=PL5) such that we have the following setup:
 
-				ECB : C=|PREFIX + PL1	|PL2			|PL3|PL4|PL5 + SUFFIX + PADDING	|(PADDING)|
-				CBC : C=|IV			|PREFIX + PL1	|PL2|PL3|PL4					|PL5 + SUFFIX + PADDING|(PADDING)|
+				ECB : C=|PREFIX + PL1	|PL2			|PL3|PL4|PL5 + SUFFIX + PADDING|(PADDING)|
+				CBC : C=|IV				|PREFIX + PL1	|PL2|PL3|PL4|PL5 + SUFFIX + PADDING|(PADDING)|
 
-				Therefore, we are in ECB mode if C3 == C4. If it unlikely, that both are the same in CBC (around 1/256)
+				Therefore, we are in ECB mode if C3 == C4. If it unlikely, that both are the same in CBC (around 1/256 <= 0.004)
 
 				To not worry about padding and the prefix and suffix, let's calculate the plaintext size:
 
@@ -166,18 +166,98 @@ func TestECBorCBCOracle(t *testing.T) {
 
 
 		*/
-		plaintext := bytes.Repeat([]byte("\x00"), 11+16*4)
+		plaintext := bytes.Repeat([]byte("\x00"), 11+16*3)
 		ciphertext, isECB := set.ECBorCBC(plaintext)
 
-		t.Log(i, isECB)
-		t.Log(ciphertext[2*16 : 3*16])
-		t.Log(ciphertext[3*16 : 4*16])
-
-		if bytes.Equal(ciphertext[3*16:4*16], ciphertext[4*16:5*16]) == isECB {
+		if bytes.Equal(ciphertext[2*16:3*16], ciphertext[3*16:4*16]) == isECB {
 			sucess += 1
 		}
 
 	}
 
-	t.Logf("Won this sucess rate of %f", float32(sucess)/float32(tries))
+	ratio := float32(sucess) / float32(tries)
+	t.Logf("Won this sucess rate of %f", ratio)
+
+	if ratio < 1-0.004 {
+		t.Errorf("Winning ratio to low %f", ratio)
+	}
+
+}
+
+func TestByteAtATimeECBOracle(t *testing.T) {
+
+	unkownString, _ := base64.RawStdEncoding.DecodeString(`Um9sbGluJyBpbiBteSA1LjAKV2l0aCBteSByYWctdG9wIGRvd24gc28gbXkg
+	aGFpciBjYW4gYmxvdwpUaGUgZ2lybGllcyBvbiBzdGFuZGJ5IHdhdmluZyBq
+	dXN0IHRvIHNheSBoaQpEaWQgeW91IHN0b3A/IE5vLCBJIGp1c3QgZHJvdmUg
+	YnkK`)
+	oracle := set.ByteAtATimeECBOracleFactory(unkownString)
+
+	// determine blocksize
+	emptyEncrpytion := oracle([]byte{})
+	startLength := len(emptyEncrpytion)
+
+	blocksize := 0
+	prefixLengthForcePaddingBlock := 1
+
+	for ; ; prefixLengthForcePaddingBlock++ {
+		if testLength := len(oracle(bytes.Repeat([]byte("\x00"), prefixLengthForcePaddingBlock))) - startLength; testLength > 0 {
+			blocksize = testLength
+			break
+		}
+	}
+
+	t.Logf("Determined blocksize %d", blocksize)
+
+	unkownStringLength := startLength - prefixLengthForcePaddingBlock
+
+	if len(unkownString) != unkownStringLength {
+		t.Errorf("Unkown string length: Have %d Want %d", unkownStringLength, len(unkownString))
+	}
+
+	unkownStringLengthBlocks := startLength / blocksize
+	guessedUnkownString := set.NewSlidingBuffer(bytes.Repeat([]byte("\x00"), blocksize-1), blocksize-1)
+
+mainloop:
+	for currentBlockCounter := 0; currentBlockCounter < unkownStringLengthBlocks; currentBlockCounter++ {
+		for currentBytePosition := 15; currentBytePosition > -1; currentBytePosition-- {
+			comparisionBlock := oracle(bytes.Repeat([]byte("\x00"), currentBytePosition))[currentBlockCounter*16 : (currentBlockCounter+1)*16]
+
+			currentPayload, err := guessedUnkownString.Window()
+
+			if err != nil {
+				t.Fatal("insuficient learned bytes")
+			}
+
+			var byteValue byte = 0
+			circuitBreaker := false
+
+			for ; byteValue != 255; byteValue++ {
+				payload := append(currentPayload, byteValue)
+				response := oracle(payload)[:16]
+				if bytes.Equal(comparisionBlock, response) {
+					circuitBreaker = true
+					break
+				}
+			}
+
+			if !circuitBreaker {
+				break mainloop
+			}
+
+			guessedUnkownString.Append(byteValue)
+
+			err = guessedUnkownString.AdvanceWindow(1)
+
+			if err != nil {
+				t.Fatal("Not enough bytes")
+			}
+		}
+	}
+
+	// ignore written zeros
+	result := guessedUnkownString.GetBuffer()[blocksize-1 : unkownStringLength+blocksize-1]
+	t.Log(string(result))
+	if !bytes.Equal(result, unkownString) {
+		t.Error("Did not decrypt sucessfully")
+	}
 }

@@ -167,3 +167,34 @@ func ECBorCBC(plaintext []byte) (ciphertext []byte, isECB bool) {
 	return ciphertext, isECB
 
 }
+
+func ByteAtATimeECBOracleFactory(unkownString []byte) func([]byte) []byte {
+
+	key := make([]byte, 16)
+
+	if _, err := rand.Reader.Read(key); err != nil {
+		panic("Not enough randomness")
+	}
+
+	return func(prefix []byte) []byte {
+
+		aes, err := aes.NewCipher(key)
+
+		if err != nil {
+			panic("AES not available with key size 16")
+		}
+
+		paddedPrefixedPlaintext := PCKS7Padding(append(prefix, unkownString...))
+
+		ciphertextLength := len(paddedPrefixedPlaintext)
+		ciphertext := make([]byte, ciphertextLength)
+		blocksize := aes.BlockSize()
+
+		for i := 0; i < ciphertextLength; i += blocksize {
+			aes.Encrypt(ciphertext[i:i+blocksize], paddedPrefixedPlaintext[i:i+blocksize])
+		}
+
+		return ciphertext
+
+	}
+}
