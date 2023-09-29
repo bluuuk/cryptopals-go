@@ -5,6 +5,7 @@ import (
 	"bytes"
 	set "cryptopals/internal/set2"
 	"encoding/base64"
+	"fmt"
 	"os"
 	"reflect"
 	"strings"
@@ -186,11 +187,20 @@ func TestECBorCBCOracle(t *testing.T) {
 
 func TestByteAtATimeECBOracle(t *testing.T) {
 
-	unkownString, _ := base64.RawStdEncoding.DecodeString(`Um9sbGluJyBpbiBteSA1LjAKV2l0aCBteSByYWctdG9wIGRvd24gc28gbXkg
-	aGFpciBjYW4gYmxvdwpUaGUgZ2lybGllcyBvbiBzdGFuZGJ5IHdhdmluZyBq
-	dXN0IHRvIHNheSBoaQpEaWQgeW91IHN0b3A/IE5vLCBJIGp1c3QgZHJvdmUg
-	YnkK`)
+	unkownString, err := base64.StdEncoding.DecodeString(
+		"Um9sbGluJyBpbiBteSA1LjAKV2l0aCBteSByYWctdG9wIGRvd24gc28gbXkg" +
+			"aGFpciBjYW4gYmxvdwpUaGUgZ2lybGllcyBvbiBzdGFuZGJ5IHdhdmluZyBq" +
+			"dXN0IHRvIHNheSBoaQpEaWQgeW91IHN0b3A/IE5vLCBJIGp1c3QgZHJvdmUg" +
+			"YnkK",
+	)
+
+	if err != nil {
+		t.Error(err)
+	}
+
 	oracle := set.ByteAtATimeECBOracleFactory(unkownString)
+	fmt.Print(string(unkownString))
+	fmt.Print(err)
 
 	// determine blocksize
 	emptyEncrpytion := oracle([]byte{})
