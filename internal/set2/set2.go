@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	insecureRand "math/rand"
 )
 
 func PCKS7Padding(input []byte) []byte {
@@ -168,7 +169,7 @@ func ECBorCBC(plaintext []byte) (ciphertext []byte, isECB bool) {
 
 }
 
-func ByteAtATimeECBOracleFactory(unkownString []byte) func([]byte) []byte {
+func ByteAtATimeECBOracleFactory(prefix []byte, unkownString []byte, shufflePrefix bool) func([]byte) []byte {
 
 	key := make([]byte, 16)
 
@@ -176,7 +177,7 @@ func ByteAtATimeECBOracleFactory(unkownString []byte) func([]byte) []byte {
 		panic("Not enough randomness")
 	}
 
-	return func(prefix []byte) []byte {
+	return func(input []byte) []byte {
 
 		aes, err := aes.NewCipher(key)
 
@@ -184,7 +185,11 @@ func ByteAtATimeECBOracleFactory(unkownString []byte) func([]byte) []byte {
 			panic("AES not available with key size 16")
 		}
 
-		paddedPrefixedPlaintext := PCKS7Padding(append(prefix, unkownString...))
+		if shufflePrefix {
+			insecureRand.Shuffle(len(prefix), func(i, j int) { prefix[i], prefix[j] = prefix[j], prefix[i] })
+		}
+
+		paddedPrefixedPlaintext := PCKS7Padding(append(append(prefix, input...), unkownString...))
 
 		ciphertextLength := len(paddedPrefixedPlaintext)
 		ciphertext := make([]byte, ciphertextLength)

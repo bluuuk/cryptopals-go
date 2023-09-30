@@ -3,9 +3,9 @@ package set_test
 import (
 	"bufio"
 	"bytes"
+	"crypto/rand"
 	set "cryptopals/internal/set2"
 	"encoding/base64"
-	"fmt"
 	"os"
 	"reflect"
 	"strings"
@@ -185,7 +185,7 @@ func TestECBorCBCOracle(t *testing.T) {
 
 }
 
-func TestByteAtATimeECBOracle(t *testing.T) {
+func TestByteAtATimeECBOracleSimple(t *testing.T) {
 
 	unkownString, err := base64.StdEncoding.DecodeString(
 		"Um9sbGluJyBpbiBteSA1LjAKV2l0aCBteSByYWctdG9wIGRvd24gc28gbXkg" +
@@ -198,9 +198,7 @@ func TestByteAtATimeECBOracle(t *testing.T) {
 		t.Error(err)
 	}
 
-	oracle := set.ByteAtATimeECBOracleFactory(unkownString)
-	fmt.Print(string(unkownString))
-	fmt.Print(err)
+	oracle := set.ByteAtATimeECBOracleFactory([]byte{}, unkownString, false)
 
 	// determine blocksize
 	emptyEncrpytion := oracle([]byte{})
@@ -269,5 +267,172 @@ mainloop:
 	t.Log(string(result))
 	if !bytes.Equal(result, unkownString) {
 		t.Error("Did not decrypt sucessfully")
+	}
+}
+
+func TestByteAtATimeECBOracleHard(t *testing.T) {
+
+	unkownString, err := base64.StdEncoding.DecodeString(
+		"Um9sbGluJyBpbiBteSA1LjAKV2l0aCBteSByYWctdG9wIGRvd24gc28gbXkg" +
+			"aGFpciBjYW4gYmxvdwpUaGUgZ2lybGllcyBvbiBzdGFuZGJ5IHdhdmluZyBq" +
+			"dXN0IHRvIHNheSBoaQpEaWQgeW91IHN0b3A/IE5vLCBJIGp1c3QgZHJvdmUg" +
+			"YnkK",
+	)
+
+	if err != nil {
+		t.Error(err)
+	}
+
+	// constant prefix, at most 4 blocks
+	/*
+		Variations:
+
+		1. Changing but constant length prefix
+		we would try to look when two constant blocks are changing to get the prefix length
+		if the prefix length is recovered, we can fill up a space block with 0 such that we do not need to care about the prefix anymore
+
+		-> This version supports this kind of prefix
+		2. Completly changing prefix
+		kinda hard, we would need to make repeated guesses
+
+		-> This version does not support this kind of prefix
+	*/
+
+	// test for different prefix lengths
+	for prefixlen := 10; prefixlen < 30; prefixlen++ {
+
+		prefix := make([]byte, prefixlen)
+		if _, err := rand.Reader.Read(prefix); err != nil {
+			panic("Not enough randomness")
+		}
+
+		oracle := set.ByteAtATimeECBOracleFactory(prefix, unkownString, true)
+
+		// determine blocksize
+		emptyEncrpytion := oracle([]byte{})
+		startLength := len(emptyEncrpytion)
+
+		blocksize := 0
+		forcePaddingSize := 1
+
+		for ; ; forcePaddingSize++ {
+			if testLength := len(oracle(bytes.Repeat([]byte("\x00"), forcePaddingSize))) - startLength; testLength > 0 {
+				blocksize = testLength
+				break
+			}
+		}
+
+		t.Logf("Determined blocksize %d", blocksize)
+
+		// determine prefix placement by forcing repeated blocks, we need 3 blocks of input to force it
+		response := oracle(bytes.Repeat([]byte("\x00"), forcePaddingSize+3*blocksize))
+		collisionIndex := 0
+
+		//							   | <- collisionIndex
+		// [PREFIX|PREFIX|PREFIX + 0000|00000|00000|SECRET]
+		// we want to move the index back to infer the prefix length
+
+		for ; collisionIndex < len(response)-2*blocksize; collisionIndex += blocksize {
+			if bytes.Equal(
+				response[collisionIndex:collisionIndex+blocksize],
+				response[collisionIndex+blocksize:collisionIndex+2*blocksize],
+			) {
+				break
+			}
+		}
+		t.Logf("First collision at %d", collisionIndex)
+
+		comparisionBlock := response[collisionIndex : collisionIndex+blocksize]
+		prefixLength := 0
+
+		//						|prefix| <- collisionIndex
+		// [PREFIX|PREFIX|PREFIX + 0000|00000|00000|SECRET]
+		// we place a \x01 to see right after the prefix and move it to the right
+		// in order to see at which point the prefix string with the input
+		// does not change anymore. If we compare the block after the collision index,
+		// we can even get the length if the prefix is changing!
+
+		/*								| CMP |
+		[PREFIX|PREFIX|PREFIX + 1000|00000|00000|SECRET]
+		[PREFIX|PREFIX|PREFIX + 0100|00000|00000|SECRET]
+		[PREFIX|PREFIX|PREFIX + 0010|00000|00000|SECRET]
+		[PREFIX|PREFIX|PREFIX + 0001|00000|00000|SECRET]
+		[PREFIX|PREFIX|PREFIX + 0000|10000|00000|SECRET]
+		*/
+
+		for ; prefixLength < blocksize; prefixLength++ {
+			payload := append(bytes.Repeat([]byte("\x00"), prefixLength), []byte("\x01")...)
+			// two block just to make sure we do not run into to short ciphertexts
+			payload = append(payload, bytes.Repeat([]byte("\x00"), blocksize*2)...)
+
+			if !bytes.Equal(comparisionBlock, oracle(payload)[collisionIndex:collisionIndex+blocksize]) {
+				break
+			}
+		}
+
+		prefixLength = collisionIndex - prefixLength
+		t.Logf("Prefix length of %d", prefixLength)
+
+		// determine prefix length
+		unkownStringLength := startLength - forcePaddingSize - prefixLength
+
+		if len(unkownString) != unkownStringLength {
+			t.Errorf("Unkown string length: Have %d Want %d", unkownStringLength, len(unkownString))
+		}
+
+		startblock := collisionIndex / blocksize
+		// we want to start with a clean block, so we add pad the prefix
+		nextBlockPadding := (blocksize - (prefixLength % blocksize))
+		if nextBlockPadding == blocksize {
+			nextBlockPadding = 0
+		}
+
+		// always assume padding
+		unkownStringLengthBlocks := (unkownStringLength / blocksize) + 1
+		guessedUnkownString := set.NewSlidingBuffer(bytes.Repeat([]byte("\x00"), blocksize-1+nextBlockPadding), blocksize-1+nextBlockPadding)
+
+	mainloop:
+		for currentBlockCounter := startblock; currentBlockCounter < unkownStringLengthBlocks+startblock; currentBlockCounter++ {
+			for currentBytePosition := 15; currentBytePosition > -1; currentBytePosition-- {
+				comparisionBlock := oracle(bytes.Repeat([]byte("\x00"), currentBytePosition+nextBlockPadding))[currentBlockCounter*16 : (currentBlockCounter+1)*16]
+
+				currentPayload, err := guessedUnkownString.Window()
+
+				if err != nil {
+					t.Fatal("insuficient learned bytes")
+				}
+
+				var byteValue byte = 0
+				circuitBreaker := false
+
+				for ; byteValue != 255; byteValue++ {
+					payload := append(currentPayload, byteValue)
+					response := oracle(payload)[collisionIndex : collisionIndex+blocksize]
+					if bytes.Equal(comparisionBlock, response) {
+						circuitBreaker = true
+						break
+					}
+				}
+
+				if !circuitBreaker {
+					break mainloop
+				}
+
+				guessedUnkownString.Append(byteValue)
+
+				err = guessedUnkownString.AdvanceWindow(1)
+
+				if err != nil {
+					t.Fatal("Not enough bytes")
+				}
+			}
+		}
+
+		// ignore written zeros
+		result := guessedUnkownString.GetBuffer()[blocksize-1+nextBlockPadding : unkownStringLength+blocksize-1+nextBlockPadding]
+		t.Log(string(result))
+		if !bytes.Equal(result, unkownString) {
+			t.Error("Did not decrypt sucessfully")
+		}
 	}
 }
