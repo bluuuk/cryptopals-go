@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -270,5 +271,51 @@ func TestECBCutAndPasteAttack(t *testing.T) {
 	}
 	if resp.StatusCode != http.StatusAccepted {
 		t.Fatal("Expected forbidden, got", resp.StatusCode)
+	}
+}
+
+func TestPCKS7Unpad(t *testing.T) {
+
+	tests := []struct {
+		name    string
+		input   []byte
+		want    []byte
+		wantErr bool
+	}{
+		{
+			name:    "Normal",
+			input:   []byte("ICE ICE BABY\x04\x04\x04\x04"),
+			want:    []byte("ICE ICE BABY"),
+			wantErr: false,
+		},
+		{
+			name:    "Bad padding - Padding string does not match padding value",
+			input:   []byte("ICE ICE BABY\x04\x04\x04"),
+			want:    []byte("ICE ICE BABY"),
+			wantErr: false,
+		},
+		{
+			name:    "Bad padding - To big",
+			input:   []byte("ICE ICE BABY\x05\x05\x05\x05"),
+			want:    nil,
+			wantErr: true,
+		}, {
+			name:    "Bad padding - Bigger than plaintext",
+			input:   []byte("ICE ICE BABY\xFF"),
+			want:    nil,
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := set.PCKS7Unpad(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("PCKS7Unpad() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("PCKS7Unpad() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

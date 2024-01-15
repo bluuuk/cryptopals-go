@@ -11,8 +11,37 @@ import (
 	insecureRand "math/rand"
 )
 
+func XOR(a, b []byte) []byte {
+
+	min := len(a)
+	if b := len(b); min > b {
+		min = b
+	}
+
+	output := make([]byte, min)
+
+	for i := range a {
+		output[i] = a[i] ^ b[i]
+	}
+
+	return output
+}
+
 func PCKS7Padding(input []byte) []byte {
 	return PCKS7PaddingVarBlockLen(input, 16)
+}
+
+func PCKS7Unpad(input []byte) ([]byte, error) {
+	padding := input[len(input)-1]
+	if !bytes.HasSuffix(input, bytes.Repeat([]byte{padding}, int(padding))) {
+		return nil, errors.New("does not end with padding string")
+	}
+
+	if len(input) <= int(padding) {
+		return nil, errors.New("padding too big")
+	}
+
+	return input[:len(input)-int(padding)], nil
 }
 
 func PCKS7PaddingVarBlockLen(input []byte, blocklength int) []byte {
@@ -26,24 +55,6 @@ func PCKS7PaddingVarBlockLen(input []byte, blocklength int) []byte {
 	} else {
 		return append(input, bytes.Repeat([]byte{byte(blocklength - l%blocklength)}, blocklength-l%blocklength)...)
 	}
-}
-
-func XOR(a, b []byte) (res []byte) {
-	length := 0
-
-	if l1, l2 := len(a), len(b); l1 > l2 {
-		length = l2
-	} else {
-		length = l1
-	}
-
-	res = make([]byte, length)
-
-	for i := range res {
-		res[i] = a[i] ^ b[i]
-	}
-
-	return res
 }
 
 func CBCEncrypt(input, key []byte) []byte {
