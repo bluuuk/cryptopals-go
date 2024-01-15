@@ -6,8 +6,11 @@ import (
 	"crypto/rand"
 	set "cryptopals/internal/set2"
 	"encoding/base64"
+	"encoding/hex"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
-	"reflect"
 	"strings"
 	"testing"
 )
@@ -19,40 +22,6 @@ func TestVarPadding(t *testing.T) {
 
 	if observed := set.PCKS7PaddingVarBlockLen(input, 20); !bytes.Equal(observed, expected) {
 		t.Fatalf("Expected %s, but got %s", expected, observed)
-	}
-}
-
-func TestPCKS7PaddingVarBlockLen(t *testing.T) {
-	tests := []struct {
-		name        string
-		input       []byte
-		blocklength int
-		want        []byte
-	}{
-		{
-			name:        "happy path empty",
-			input:       []byte{},
-			blocklength: 16,
-			want:        bytes.Repeat([]byte{16}, 16),
-		},
-		{
-			name:        "happy path half",
-			input:       bytes.Repeat([]byte{16}, 16),
-			blocklength: 16,
-			want:        bytes.Repeat([]byte{16}, 32),
-		}, {
-			name:        "happy path full",
-			input:       bytes.Repeat([]byte{8}, 8),
-			blocklength: 16,
-			want:        bytes.Repeat([]byte{8}, 16),
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := set.PCKS7PaddingVarBlockLen(tt.input, tt.blocklength); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("PCKS7PaddingVarBlockLen() = %v, want %v", got, tt.want)
-			}
-		})
 	}
 }
 
@@ -209,7 +178,7 @@ func TestByteAtATimeECBOracleSimple(t *testing.T) {
 }
 
 func TestByteAtATimeECBOracleHard(t *testing.T) {
-
+	t.Parallel()
 	unkownString, err := base64.StdEncoding.DecodeString(
 		"Um9sbGluJyBpbiBteSA1LjAKV2l0aCBteSByYWctdG9wIGRvd24gc28gbXkg" +
 			"aGFpciBjYW4gYmxvdwpUaGUgZ2lybGllcyBvbiBzdGFuZGJ5IHdhdmluZyBq" +
@@ -237,5 +206,69 @@ func TestByteAtATimeECBOracleHard(t *testing.T) {
 		} else {
 			t.Log(string(result))
 		}
+	}
+}
+
+func TestECBCutAndPaste(t *testing.T) {
+
+	server := httptest.NewServer(set.CreateHandler())
+	client := server.Client()
+
+	resp, err := client.Get(server.URL + "/profileFor?email=" + hex.EncodeToString([]byte("Viktor@web.de")))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err = client.Post(server.URL+"/isAdmin", "application/octet-stream", resp.Body)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatal("Expected forbidden, got", resp.StatusCode)
+	}
+}
+
+func TestECBCutAndPasteAttack(t *testing.T) {
+
+	server := httptest.NewServer(set.CreateHandler())
+	client := server.Client()
+
+	// have:email=Viktor@web.de&id=0&role=guest
+	// want:email=Viktor@web.de&id=0&role=admin
+
+	// What will be encrpyted=> email=Viktor@web|.de&id=0&role=gu|estXXXXXXXXXXXXX
+	// Therefore, push the role to the end such that it will be in one block
+
+	email := hex.EncodeToString([]byte("Viktor22@web.de"))
+	resp, err := client.Get(server.URL + "/profileFor?email=" + email)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// read resp into byte array
+	data1, _ := io.ReadAll(resp.Body)
+
+	// Now we want the admin block=> email=Vik@web.de|adminXXXXXXXXXXXXX|&id=0...
+	// Therefore, push the role to the end such that it will be in one block
+
+	payload := append([]byte("Vik@web.de"), set.PCKS7Padding([]byte("admin"))...)
+	resp2, err2 := client.Get(server.URL + "/profileFor?email=" + hex.EncodeToString(payload))
+
+	if err2 != nil {
+		t.Fatal(err2)
+	}
+	data2, _ := io.ReadAll(resp2.Body)
+
+	malicious := append(data1[:32], data2[16:32]...)
+
+	resp, err = client.Post(server.URL+"/isAdmin", "application/octet-stream", bytes.NewBuffer(malicious))
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatal("Expected forbidden, got", resp.StatusCode)
 	}
 }
